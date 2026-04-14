@@ -45,6 +45,8 @@ env:
 
 permissions: {}
 
+run-name: "Deploy ${{ inputs.release_tag }} to ${{ inputs.environment }} ${{ inputs.change_ticket }}"
+
 jobs:
   deploy:
     name: "Deploy ${{ inputs.release_tag }} to ${{ inputs.environment }}"
