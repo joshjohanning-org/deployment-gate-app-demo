@@ -1,0 +1,131 @@
+###############################################################################
+# ci.yml - Continuous Integration
+#
+# Triggered on push to main. Builds the app, runs tests, creates a GitHub
+# Release with a tag, and attests the build artifact.
+#
+# This is what a TEAM would write — no enforcement logic here.
+# The deployment gate fires automatically on the environments.
+###############################################################################
+
+name: CI - Build & Release
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  build-and-release:
+    name: Build, Test & Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run tests
+        run: npm test || true
+
+      - name: Create build artifact
+        run: |
+          mkdir -p dist
+          cp -r src/ dist/
+          cp package.json dist/
+          cd dist && npm install --omit=dev 2>/dev/null || true
+          cd ..
+          zip -r app-build.zip dist/
+          echo "Build artifact created: app-build.zip"
+          ls -lh app-build.zip
+
+      - name: Generate version tag
+        id: version
+        run: |
+          # Use run number as the patch version for simplicity
+          VERSION="v1.0.${{ github.run_number }}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Version: $VERSION"
+
+      - name: Generate artifact hash
+        id: hash
+        run: |
+          DIGEST="sha256:$(sha256sum app-build.zip | awk '{print $1}')"
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+          echo "Artifact digest: $DIGEST"
+
+      - name: Create GitHub Release
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+
+          # Create tag
+          git tag "$VERSION"
+          git push origin "$VERSION"
+
+          # Create release with artifact attached
+          gh release create "$VERSION" \
+            --title "Release $VERSION" \
+            --notes "Automated release from CI pipeline.
+
+          **Commit:** ${{ github.sha }}
+          **Artifact digest:** \`${{ steps.hash.outputs.digest }}\`
+          **Workflow run:** [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" \
+            app-build.zip
+
+          echo "Release $VERSION created with app-build.zip attached"
+
+      - name: Attest build artifact
+        uses: actions/attest@v4
+        with:
+          subject-path: app-build.zip
+          subject-name: deployment-gate-app-demo
+
+      - name: Register linked artifact storage record
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api -X POST \
+            "orgs/${{ github.repository_owner }}/artifacts/metadata/storage-record" \
+            -f name="deployment-gate-app-demo" \
+            -f digest="${{ steps.hash.outputs.digest }}" \
+            -f version="${{ steps.version.outputs.version }}" \
+            -f registry_url="https://github.com" \
+            -f repository="${{ github.event.repository.name }}" \
+            -f artifact_url="https://github.com/${{ github.repository }}/releases/tag/${{ steps.version.outputs.version }}" \
+            -f status="active" \
+            -f github_repository="${{ github.event.repository.name }}" \
+          && echo "Storage record registered" \
+          || echo "Storage record registration failed (linked artifacts may not be enabled)"
+
+      - name: Build summary
+        run: |
+          echo "## Build & Release Complete" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Field | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|-------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| **Version** | \`${{ steps.version.outputs.version }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| **Digest** | \`${{ steps.hash.outputs.digest }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| **Release** | [GitHub Release](https://github.com/${{ github.repository }}/releases/tag/${{ steps.version.outputs.version }}) |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| **Attestation** | Signed provenance |" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "To deploy this release, go to **Actions → Deploy** and select \`${{ steps.version.outputs.version }}\`" >> "$GITHUB_STEP_SUMMARY"

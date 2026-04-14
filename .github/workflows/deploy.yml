@@ -1,0 +1,135 @@
+###############################################################################
+# deploy.yml - Continuous Deployment
+#
+# Manually triggered (workflow_dispatch). The deployer picks:
+#   1. Which release tag to deploy
+#   2. Which environment to deploy to
+#   3. A ServiceNow change ticket (required for production)
+#
+# IMPORTANT: This workflow has NO enforcement logic.
+# The Custom Deployment Protection Rule (GitHub App) fires AUTOMATICALLY
+# when this workflow targets a protected environment. The gate checks:
+#   - Was this artifact deployed to the prior environment?
+#   - Is the ServiceNow ticket valid? (for production)
+#
+# This is the whole point: teams write whatever workflow they want,
+# and the gate handles enforcement at the environment level.
+###############################################################################
+
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to deploy (e.g., v1.0.42)"
+        required: true
+        type: string
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        options:
+          - Dev
+          - QA
+          - Staging
+          - Production-East
+          - Production-Central
+      change_ticket:
+        description: "ServiceNow change ticket (required for Production, e.g., CHG0012345)"
+        required: false
+        type: string
+
+env:
+  APP_NAME: deployment-gate-app-demo
+
+permissions: {}
+
+jobs:
+  deploy:
+    name: "Deploy ${{ inputs.release_tag }} to ${{ inputs.environment }}"
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+      deployments: write
+      artifact-metadata: write
+
+    steps:
+      - name: Download release artifact
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Downloading artifact from release ${{ inputs.release_tag }}..."
+          gh release download "${{ inputs.release_tag }}" \
+            --repo "${{ github.repository }}" \
+            --pattern "app-build.zip" \
+            --dir .
+          echo "Downloaded:"
+          ls -lh app-build.zip
+
+      - name: Generate artifact hash
+        id: hash
+        run: |
+          DIGEST="sha256:$(sha256sum app-build.zip | awk '{print $1}')"
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+
+      - name: Simulate deployment
+        run: |
+          echo "═══════════════════════════════════════════════"
+          echo "  Deploying to ${{ inputs.environment }}"
+          echo "  Release: ${{ inputs.release_tag }}"
+          echo "  Digest:  ${{ steps.hash.outputs.digest }}"
+          if [ -n "${{ inputs.change_ticket }}" ]; then
+            echo "  Change ticket: ${{ inputs.change_ticket }}"
+          fi
+          echo "═══════════════════════════════════════════════"
+          echo ""
+          echo "Extracting artifact..."
+          unzip -q app-build.zip
+          echo "Deploying application..."
+          sleep 2
+          echo "Deployment to ${{ inputs.environment }} complete!"
+
+      - name: Register linked artifact deployment record
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Map environment name to logical_environment
+          case "${{ inputs.environment }}" in
+            "Dev") LOGICAL_ENV="development" ;;
+            "QA") LOGICAL_ENV="testing" ;;
+            "Staging") LOGICAL_ENV="staging" ;;
+            "Production-East") LOGICAL_ENV="production" ;;
+            "Production-Central") LOGICAL_ENV="production" ;;
+            *) LOGICAL_ENV="${{ inputs.environment }}" ;;
+          esac
+
+          gh api -X POST \
+            "orgs/${{ github.repository_owner }}/artifacts/metadata/deployment-record" \
+            -f name="${{ env.APP_NAME }}" \
+            -f digest="${{ steps.hash.outputs.digest }}" \
+            -f version="${{ inputs.release_tag }}" \
+            -f status="deployed" \
+            -f logical_environment="$LOGICAL_ENV" \
+            -f deployment_name="${{ inputs.environment }}-deploy-${{ github.run_number }}" \
+            -f github_repository="${{ github.event.repository.name }}" \
+          && echo "Deployment record registered" \
+          || echo "Deployment record registration failed (linked artifacts may not be enabled)"
+
+      - name: Deployment summary
+        run: |
+          echo "## Deployed to ${{ inputs.environment }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Field | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|-------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| **Release** | \`${{ inputs.release_tag }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| **Environment** | ${{ inputs.environment }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| **Digest** | \`${{ steps.hash.outputs.digest }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "${{ inputs.change_ticket }}" ]; then
+            echo "| **Change Ticket** | \`${{ inputs.change_ticket }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "> **Note:** The Custom Deployment Protection Rule automatically validated" >> "$GITHUB_STEP_SUMMARY"
+          echo "> this deployment before it was allowed to proceed. No enforcement logic" >> "$GITHUB_STEP_SUMMARY"
+          echo "> exists in this workflow — it's all handled at the environment level." >> "$GITHUB_STEP_SUMMARY"
