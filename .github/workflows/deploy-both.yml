@@ -83,6 +83,11 @@ jobs:
           echo "Deploying ${{ inputs.release_tag }} to ${{ inputs.environment }}..."
           unzip -q app-build.zip
           sleep 2
+          # Forced failure for QA to test if a failed deployment blocks Staging
+          if [ "${{ inputs.environment }}" = "QA" ]; then
+            echo "SIMULATED FAILURE: Deployment to QA failed!"
+            exit 1
+          fi
           echo "Done!"
 
       - name: Register deployment record
