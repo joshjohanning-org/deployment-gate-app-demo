@@ -5,7 +5,7 @@
 # Each environment has its own job with the gate firing automatically.
 ###############################################################################
 
-name: "Deploy (all environments)"
+name: "Option 2: Deploy (all environments)"
 
 on:
   workflow_dispatch:

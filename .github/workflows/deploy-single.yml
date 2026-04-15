@@ -5,7 +5,7 @@
 # No "Deploy All" option — use deploy-all.yml for the full chain.
 ###############################################################################
 
-name: "Deploy (single)"
+name: "Option 2: Deploy (single)"
 
 on:
   workflow_dispatch:
