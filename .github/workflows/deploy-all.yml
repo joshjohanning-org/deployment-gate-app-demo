@@ -1,0 +1,215 @@
+###############################################################################
+# deploy-all.yml - Deploy to ALL environments
+#
+# Full chain: Dev → QA → Staging → Production-East + Production-Central
+# Each environment has its own job with the gate firing automatically.
+###############################################################################
+
+name: "Deploy (all environments)"
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to deploy (e.g., v1.0.5)"
+        required: true
+        type: string
+      change_ticket:
+        description: "ServiceNow change ticket (required for Production, e.g., CHG0012345)"
+        required: false
+        type: string
+
+env:
+  APP_NAME: deployment-gate-app-demo
+
+permissions: {}
+
+run-name: "Deploy ${{ inputs.release_tag }} to all environments ${{ inputs.change_ticket }}"
+
+jobs:
+  deploy-dev:
+    name: "Deploy to Dev"
+    runs-on: ubuntu-latest
+    environment: Dev
+    permissions:
+      contents: read
+      deployments: write
+      artifact-metadata: write
+    outputs:
+      digest: ${{ steps.hash.outputs.digest }}
+    steps:
+      - name: Download release artifact
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download "${{ inputs.release_tag }}" \
+            --repo "${{ github.repository }}" \
+            --pattern "app-build.zip" --dir .
+
+      - name: Generate artifact hash
+        id: hash
+        run: |
+          DIGEST="sha256:$(sha256sum app-build.zip | awk '{print $1}')"
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy
+        run: |
+          echo "Deploying ${{ inputs.release_tag }} to Dev..."
+          unzip -q app-build.zip && sleep 2 && echo "Done!"
+
+      - name: Register deployment record
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api -X POST \
+            "orgs/${{ github.repository_owner }}/artifacts/metadata/deployment-record" \
+            -f name="${{ env.APP_NAME }}" -f digest="${{ steps.hash.outputs.digest }}" \
+            -f version="${{ inputs.release_tag }}" -f status="deployed" \
+            -f logical_environment="development" \
+            -f deployment_name="Dev-deploy-${{ github.run_number }}" \
+            -f github_repository="${{ github.event.repository.name }}" \
+          || true
+
+  deploy-qa:
+    needs: deploy-dev
+    name: "Deploy to QA"
+    runs-on: ubuntu-latest
+    environment: QA
+    permissions:
+      contents: read
+      deployments: write
+      artifact-metadata: write
+    steps:
+      - name: Download release artifact
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download "${{ inputs.release_tag }}" \
+            --repo "${{ github.repository }}" \
+            --pattern "app-build.zip" --dir .
+
+      - name: Deploy
+        run: |
+          echo "Deploying ${{ inputs.release_tag }} to QA..."
+          unzip -q app-build.zip && sleep 2 && echo "Done!"
+
+      - name: Register deployment record
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api -X POST \
+            "orgs/${{ github.repository_owner }}/artifacts/metadata/deployment-record" \
+            -f name="${{ env.APP_NAME }}" -f digest="${{ needs.deploy-dev.outputs.digest }}" \
+            -f version="${{ inputs.release_tag }}" -f status="deployed" \
+            -f logical_environment="testing" \
+            -f deployment_name="QA-deploy-${{ github.run_number }}" \
+            -f github_repository="${{ github.event.repository.name }}" \
+          || true
+
+  deploy-staging:
+    needs: [deploy-dev, deploy-qa]
+    name: "Deploy to Staging"
+    runs-on: ubuntu-latest
+    environment: Staging
+    permissions:
+      contents: read
+      deployments: write
+      artifact-metadata: write
+    steps:
+      - name: Download release artifact
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download "${{ inputs.release_tag }}" \
+            --repo "${{ github.repository }}" \
+            --pattern "app-build.zip" --dir .
+
+      - name: Deploy
+        run: |
+          echo "Deploying ${{ inputs.release_tag }} to Staging..."
+          unzip -q app-build.zip && sleep 2 && echo "Done!"
+
+      - name: Register deployment record
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api -X POST \
+            "orgs/${{ github.repository_owner }}/artifacts/metadata/deployment-record" \
+            -f name="${{ env.APP_NAME }}" -f digest="${{ needs.deploy-dev.outputs.digest }}" \
+            -f version="${{ inputs.release_tag }}" -f status="deployed" \
+            -f logical_environment="staging" \
+            -f deployment_name="Staging-deploy-${{ github.run_number }}" \
+            -f github_repository="${{ github.event.repository.name }}" \
+          || true
+
+  deploy-prod-east:
+    needs: [deploy-dev, deploy-staging]
+    name: "Deploy to Production-East"
+    runs-on: ubuntu-latest
+    environment: Production-East
+    permissions:
+      contents: read
+      deployments: write
+      artifact-metadata: write
+    steps:
+      - name: Download release artifact
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download "${{ inputs.release_tag }}" \
+            --repo "${{ github.repository }}" \
+            --pattern "app-build.zip" --dir .
+
+      - name: Deploy
+        run: |
+          echo "Deploying ${{ inputs.release_tag }} to Production-East..."
+          unzip -q app-build.zip && sleep 2 && echo "Done!"
+
+      - name: Register deployment record
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api -X POST \
+            "orgs/${{ github.repository_owner }}/artifacts/metadata/deployment-record" \
+            -f name="${{ env.APP_NAME }}" -f digest="${{ needs.deploy-dev.outputs.digest }}" \
+            -f version="${{ inputs.release_tag }}" -f status="deployed" \
+            -f logical_environment="production" \
+            -f deployment_name="Production-East-deploy-${{ github.run_number }}" \
+            -f github_repository="${{ github.event.repository.name }}" \
+          || true
+
+  deploy-prod-central:
+    needs: [deploy-dev, deploy-staging]
+    name: "Deploy to Production-Central"
+    runs-on: ubuntu-latest
+    environment: Production-Central
+    permissions:
+      contents: read
+      deployments: write
+      artifact-metadata: write
+    steps:
+      - name: Download release artifact
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download "${{ inputs.release_tag }}" \
+            --repo "${{ github.repository }}" \
+            --pattern "app-build.zip" --dir .
+
+      - name: Deploy
+        run: |
+          echo "Deploying ${{ inputs.release_tag }} to Production-Central..."
+          unzip -q app-build.zip && sleep 2 && echo "Done!"
+
+      - name: Register deployment record
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api -X POST \
+            "orgs/${{ github.repository_owner }}/artifacts/metadata/deployment-record" \
+            -f name="${{ env.APP_NAME }}" -f digest="${{ needs.deploy-dev.outputs.digest }}" \
+            -f version="${{ inputs.release_tag }}" -f status="deployed" \
+            -f logical_environment="production" \
+            -f deployment_name="Production-Central-deploy-${{ github.run_number }}" \
+            -f github_repository="${{ github.event.repository.name }}" \
+          || true

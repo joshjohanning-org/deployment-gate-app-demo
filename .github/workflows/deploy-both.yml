@@ -16,7 +16,7 @@
 # and the gate handles enforcement at the environment level.
 ###############################################################################
 
-name: Deploy
+name: "Deploy (single or all)"
 
 on:
   workflow_dispatch:

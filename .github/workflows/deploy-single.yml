@@ -1,0 +1,91 @@
+###############################################################################
+# deploy-single.yml - Deploy to a single environment
+#
+# Clean single-environment deploy with dynamic job naming.
+# No "Deploy All" option — use deploy-all.yml for the full chain.
+###############################################################################
+
+name: "Deploy (single)"
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to deploy (e.g., v1.0.5)"
+        required: true
+        type: string
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        options:
+          - Dev
+          - QA
+          - Staging
+          - Production-East
+          - Production-Central
+      change_ticket:
+        description: "ServiceNow change ticket (required for Production, e.g., CHG0012345)"
+        required: false
+        type: string
+
+env:
+  APP_NAME: deployment-gate-app-demo
+
+permissions: {}
+
+run-name: "Deploy ${{ inputs.release_tag }} to ${{ inputs.environment }} ${{ inputs.change_ticket }}"
+
+jobs:
+  deploy:
+    name: "Deploy ${{ inputs.release_tag }} to ${{ inputs.environment }}"
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+      deployments: write
+      artifact-metadata: write
+
+    steps:
+      - name: Download release artifact
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download "${{ inputs.release_tag }}" \
+            --repo "${{ github.repository }}" \
+            --pattern "app-build.zip" --dir .
+
+      - name: Generate artifact hash
+        id: hash
+        run: |
+          DIGEST="sha256:$(sha256sum app-build.zip | awk '{print $1}')"
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy
+        run: |
+          echo "Deploying ${{ inputs.release_tag }} to ${{ inputs.environment }}..."
+          unzip -q app-build.zip
+          sleep 2
+          echo "Done!"
+
+      - name: Register deployment record
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          case "${{ inputs.environment }}" in
+            "Dev") LOGICAL_ENV="development" ;;
+            "QA") LOGICAL_ENV="testing" ;;
+            "Staging") LOGICAL_ENV="staging" ;;
+            "Production-East"|"Production-Central") LOGICAL_ENV="production" ;;
+            *) LOGICAL_ENV="${{ inputs.environment }}" ;;
+          esac
+          gh api -X POST \
+            "orgs/${{ github.repository_owner }}/artifacts/metadata/deployment-record" \
+            -f name="${{ env.APP_NAME }}" \
+            -f digest="${{ steps.hash.outputs.digest }}" \
+            -f version="${{ inputs.release_tag }}" \
+            -f status="deployed" \
+            -f logical_environment="$LOGICAL_ENV" \
+            -f deployment_name="${{ inputs.environment }}-deploy-${{ github.run_number }}" \
+            -f github_repository="${{ github.event.repository.name }}" \
+          || true
