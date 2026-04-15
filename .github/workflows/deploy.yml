@@ -56,7 +56,7 @@ jobs:
   # ── Single environment deploy (when deploy_all is false) ──────────────
   deploy-single:
     if: inputs.deploy_all == false
-    name: "Deploy ${{ inputs.release_tag }} to ${{ inputs.environment }}"
+    name: "Deploy (single environment)"
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     permissions:
