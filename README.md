@@ -66,3 +66,4 @@ Teams **don't need to change their workflows** to get deployment governance. The
 - [deployment-gate-demo](https://github.com/joshjohanning-org/deployment-gate-demo) — The Custom Deployment Protection Rule app
 - [linked-artifacts-demo](https://github.com/joshjohanning-org/linked-artifacts-demo) — Linked Artifacts feature demo
 Sample team app demonstrating deployment gating with custom protection rules and linked artifacts
+
