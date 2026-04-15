@@ -84,7 +84,7 @@ jobs:
 
           # Create release with artifact attached
           gh release create "$VERSION" \
-            --title "Release $VERSION" \
+            --title "$VERSION" \
             --notes "Automated release from CI pipeline.
 
           **Commit:** ${{ github.sha }}
