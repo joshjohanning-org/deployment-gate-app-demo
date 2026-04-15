@@ -15,8 +15,10 @@ on:
     branches: [main]
     paths-ignore:
       - '**.md'
-      - '.github/workflows/deploy.yml'
+      - '.github/workflows/deploy*.yml'
   workflow_dispatch:
+
+run-name: "CI - Build & Release"
 
 permissions: {}
 
